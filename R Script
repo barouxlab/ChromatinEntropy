@@ -1,0 +1,237 @@
+Supplementary Information File 1 – Entropy Script
+
+# Compute entropy by subsampling
+
+#########################################################
+#########################################################
+#Estimate of the differential entropy
+ent_bin= function(Y,indices=NULL,larg_bin=NULL){
+  #Compute the h_corrected estimator 
+  #if larg_bin = NULL -> use the Freedman-Diaconis method to construct bins
+  #can be used for bootstrap sampling with the library 'boot'
+  if (is.null(indices)){indices = 1:length(Y)}
+  X = Y[indices]
+  if (is.null(larg_bin)){
+    if (IQR(X) == 0){stop('methode de decoupage FD inutilisable')}
+    larg_bin = 2*IQR(X)/(length(X)^(1/3))
+  }
+  bin = floor((X-min(X))/larg_bin)+1
+  p = (1/length(X))*table(bin)
+  id = (p>0)
+  H_discr=-sum(p[id]*log(p[id]))+log(larg_bin)
+  return(H_discr)
+}
+#########################################################
+#########################################################
+
+
+
+#########################################################
+#########################################################
+#BUB estimator for discrete entropy
+#Mathilde GAILLARD
+#Ref. Liam PANINSKI Estimation of Entropy and Mutual Information
+#
+library(pracma)
+library(corpcor)
+bub_opti = function(N,m,k_max){
+  #m = nber of bins
+  #N = nber of data
+  #k_max = nber of coefficients a_j for which bub_opti is using the BUB method otherwise -> compute MM estimator
+  #k_max should be less ofr equal to ? N
+  
+  p = (0:N)/N 
+  B = mat_bernouilli_polynom(p,N)
+  g = sapply(p,f,m)
+  g_col = matrix(g, ncol = 1)
+  h = c(0, sapply(p[-1],H))
+  Y_tot = matrix(h, ncol = 1)
+  
+  #every a_j initialized with the MM estimator
+  a = (0:N)/N
+  a = -a*log(a)+((1-a)/(2*N))
+  
+  best_MM = Inf
+  for (i in (1:k_max)){
+    #print(i)
+    h_exp = a[(i+1):length(a)]%*%(B[(i+1):length(B[,1]),])#part of the entropy already explained by the coeff
+    Y_non_pond = Y_tot-t(h_exp) #withdraw the part explained
+    
+    G = repmat(g,i,1)
+    X = t(G*B[1:i,])
+    D = Diag(rep(-1,i),0)+Diag(rep(1,i-1),1)
+    U = (t(X)%*%X)+(N/4)*(t(D)%*%D)
+    U[i,i] = U[i,i]+(N/4)
+    
+    Y = g_col*Y_non_pond
+    XY = (t(X)%*%Y)#-h_exp
+    XY[i] = XY[i] + (N/4)*a[i+1]
+    
+    a[1:i] = pseudoinverse(U)%*%XY
+    
+    #make a 1 col matrix
+    a_mat_1col = matrix(a, ncol = 1)
+    
+    #compare the performance of this specific set f a_j
+    biais = 2*g*abs((t(Y_tot)-a%*%B))
+    maxbiais = max(abs(biais))
+    borne_var = max((a-c(a[2:length(a)],0))^2)
+    MM = sqrt(maxbiais^2+N*borne_var)
+    
+    if(MM<best_MM){
+      #choose the best set of a_j
+      best_MM = MM
+      best_a = a
+      best_biais = maxbiais
+    }
+  }
+  return(best_a)
+}
+
+mat_bernouilli_polynom = function(p,N){
+  #compute the matrix of bernouilli polynomials
+  fa = lgamma(1:(N+1))
+  Ni = fa[N+1]-fa[1:(N+1)]-rev(fa)
+  
+  B = zeros(n =  N+1, m = N+1)
+  p = p[-1]
+  p = p[-length(p)]
+  
+  lp = log(p)
+  lq = rev(lp)
+  
+  for (i in 0:N){
+    B[i+1,2:N] = Ni[i+1]+i*lp+(N-i)*lq
+  }
+  B = exp (B)
+  B[2:(N+1),1]=zeros(N,1)
+  B[1:N,N+1]=zeros(N,1)
+  return (B)
+}
+
+H = function(x){
+  #entropy function
+  nz = (x>0)
+  return (-sum(x[nz]*log(x[nz])))
+}
+
+f = function(x,m){
+  #weight function
+  if(x<(1/m)){
+    return(m)
+  }
+  else{
+    return(1/x)
+  }
+}
+
+estimateur_bub_entropie_discrete = function(X){
+  #compute the discrete entropy with the bub_opti function
+  N = length(X)
+  h = tabulate (X+1)
+  m = length(h)
+  hist_eff = c()
+  for (i in 1:(N+1)){
+    hist_eff[i]=sum((h==i-1))
+  }
+  A = bub_opti(N,m,k_max = 11) #k_max = 11 works when N<10^6
+  H_BUB = sum(A*hist_eff)
+  return(H_BUB)
+}
+#########################################################
+#########################################################
+
+
+
+#########################################################
+#########################################################
+# Define subsampling for discrete entropy
+subsampled_BUB_H = function(X,nr,msd){
+  #compute the discrete entropy with the bub_opti function
+  H0={}
+  for (i in 1:nr) {
+    s1=sample(X,msd,replace=F)
+    E=estimateur_bub_entropie_discrete(s1)
+    H0=append(H0,E)
+    print(nr-i)
+  }
+  return(mean(H0))
+}
+#########################################################
+#########################################################
+
+
+#########################################################
+#########################################################
+# Define subsampling for differential entropy
+subsampled_bin_H = function(X,nr,msd){
+  #compute the differential entropy 
+  H0={}
+  for (i in 1:nr) {
+    s1=sample(X,msd,replace=F)
+    E=ent_bin(s1)
+    H0=append(H0,E)
+    print(nr-i)
+  }
+  return(mean(H0))
+}
+#########################################################
+#########################################################
+
+# Read the file
+path="/PATH/DATASET.csv"
+setwd(path)
+dr=read.table("DATASET.csv",header=T, sep=';')
+
+# Determine the smallest time point in cell number
+sd0=sum(dr$Day=="day0")
+sd2=sum(dr$Day=="day2")
+sd5=sum(dr$Day=="day5")
+msd=min(sd0,sd2,sd5)
+
+Day=c("day0", "day2", "day5")
+
+# test mode
+nr=4
+nc=4
+
+# production mode
+nc=ncol(dr)
+nr=100
+
+H_0={}
+H_1={}
+for (i in 24:nc) {
+  if (typeof(dr[,i]) == "integer") {
+    print ("I")
+    for (j in 1:3) {
+      M=(dr[,i][dr$Day==Day[j]])
+      E=subsampled_BUB_H(M,nr,msd)
+      H_0=append(H_0, mean(E))
+    }
+    print (H_0)
+  }
+  else {
+    print ("D")
+    for (j in 1:3) {
+      M=(dr[,i][dr$Day==Day[j]])
+      if(IQR(M)==0) {
+        i=i+1
+        H_0=H_0=append(H_0, "NA")
+      }
+      else {
+        E=subsampled_bin_H(M,nr,msd)
+        H_0=append(H_0, mean(E))
+      }      
+    }
+    print (H_0)
+  }
+  H_1=cbind(H_1,H_0)
+  H_0={}
+}
+
+colnames(H_1)=colnames(dr)[4:ncol(dr)]
+write.table(H_1, "entropy_values")
+
+
+
